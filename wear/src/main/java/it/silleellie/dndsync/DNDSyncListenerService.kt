@@ -4,6 +4,8 @@ import android.app.NotificationManager
 import android.content.ComponentName
 import android.content.Intent
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.provider.Settings
@@ -14,189 +16,163 @@ import com.google.android.gms.wearable.WearableListenerService
 import it.silleellie.dndsync.shared.PhoneSignal
 import org.apache.commons.lang3.SerializationUtils
 
-import android.os.Handler
-import android.os.Looper
-
-
-
 class DNDSyncListenerService : WearableListenerService() {
+
+    private val handler = Handler(Looper.getMainLooper())
+
+    @Volatile
+    private var pendingBedtimeRunnable: Runnable? = null
+
+    @Volatile
+    private var bedtimeTriggered = false
+
     override fun onMessageReceived(messageEvent: MessageEvent) {
-        if (messageEvent.path.equals(DND_SYNC_MESSAGE_PATH, ignoreCase = true)) {
-            Log.d(TAG, "received path: $DND_SYNC_MESSAGE_PATH")
+        if (!messageEvent.path.equals(DND_SYNC_MESSAGE_PATH, true)) {
+            super.onMessageReceived(messageEvent)
+            return
+        }
 
-            val data = messageEvent.data
-            val phoneSignal = SerializationUtils.deserialize<PhoneSignal>(data)
+        val phoneSignal =
+            SerializationUtils.deserialize<PhoneSignal>(messageEvent.data)
 
-            Log.d(TAG, "dndStatePhone: ${phoneSignal.dndState}")
+        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
 
-            val mNotificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-            val currentDndState = mNotificationManager.currentInterruptionFilter
-
-            Log.d(TAG, "currentDndState: $currentDndState")
-            
-            if (currentDndState < 0 || currentDndState > 4) {
-                Log.d(TAG, "Current DND state is suspicious, should be in range [0,4]")
+        // ---------------- DND ----------------
+        val currentDnd = nm.currentInterruptionFilter
+        phoneSignal.dndState?.let {
+            if (it != currentDnd) {
+                changeDndSetting(nm, it)
+                if (phoneSignal.vibratePref) vibrate()
             }
+        }
 
-            if (phoneSignal.dndState != null && phoneSignal.dndState == currentDndState) {
-                return
-            } else if (phoneSignal.dndState != null) {
-                Log.d(TAG, "dndStatePhone != currentDndState: ${phoneSignal.dndState} != $currentDndState")
-                changeDndSetting(mNotificationManager, phoneSignal.dndState!!)
-                if (phoneSignal.vibratePref) {
-                    vibrate()
-                }
-            }
+        // ---------------- Bedtime ----------------
+        val currentBedtime = Settings.Global.getInt(
+            applicationContext.contentResolver,
+            getBedtimeSettingName(),
+            -1
+        )
 
-            private val handler = Handler(Looper.getMainLooper())
-            private var pendingBedtimeRunnable: Runnable? = null
-            private var bedtimeTriggered = false
+        phoneSignal.bedtimeState?.let { target ->
 
+            if (target != currentBedtime) {
+                Log.d(TAG, "Bedtime change detected: $target")
 
-            val currentBedtimeState = Settings.Global.getInt(
-                applicationContext.contentResolver, getBedtimeSettingName(), -1
-            )
-
-            if (phoneSignal.bedtimeState != null && phoneSignal.bedtimeState != currentBedtimeState) {
-                Log.d(TAG, "bedtimeStatePhone != currentBedtimeState: ${phoneSignal.bedtimeState} != $currentBedtimeState")
-
-                // 状态转换：phoneSignal.bedtimeState == 1 通常为关闭，2 为开启
-                val dndState = if (phoneSignal.bedtimeState == 1) 2 else 1
-                changeDndSetting(mNotificationManager, dndState)
-
-                val bedtimeModeSuccess = changeBedtimeSetting(phoneSignal.bedtimeState!!)
-                if (bedtimeModeSuccess) {
-                    Log.d(TAG, "Bedtime mode value toggled")
-                } else {
-                    Log.d(TAG, "Bedtime mode toggle failed")
-                }
+                changeBedtimeSetting(target)
 
                 if (phoneSignal.powersavePref) {
-                    val powerModeSuccess = changePowerModeSetting(phoneSignal.bedtimeState!!)
-                    if (powerModeSuccess) {
-                        Log.d(TAG, "Power Saver mode toggled")
-                    } else {
-                        Log.d(TAG, "Power Saver mode toggle failed")
-                    }
+                    changePowerModeSetting(target)
                 }
 
-                if (phoneSignal.vibratePref) {
-                    vibrate()
-                }
+                if (phoneSignal.vibratePref) vibrate()
             }
-        } else {
-            super.onMessageReceived(messageEvent)
         }
     }
 
-    private fun changeDndSetting(mNotificationManager: NotificationManager, newSetting: Int) {
-        if (mNotificationManager.isNotificationPolicyAccessGranted) {
-            mNotificationManager.setInterruptionFilter(newSetting)
-            Log.d(TAG, "DND set to $newSetting")
-        } else {
-            Log.d(TAG, "attempting to set DND but access not granted")
+    // ---------------- DND ----------------
+    private fun changeDndSetting(nm: NotificationManager, newSetting: Int) {
+        if (nm.isNotificationPolicyAccessGranted) {
+            nm.setInterruptionFilter(newSetting)
         }
     }
 
+    // ---------------- Bedtime ----------------
     private fun getBedtimeSettingName(): String {
-        return if (Build.MANUFACTURER.contains("samsung", ignoreCase = true)) "setting_bedtime_mode_running_state" else "bedtime_mode"
+        return if (Build.MANUFACTURER.contains("samsung", true)) {
+            "setting_bedtime_mode_running_state"
+        } else {
+            "bedtime_mode"
+        }
     }
 
     private fun changeBedtimeSetting(newSetting: Int): Boolean {
-    val settingBedtimeStr = getBedtimeSettingName()
-    val resolver = applicationContext.contentResolver
+        val resolver = applicationContext.contentResolver
+        val key = getBedtimeSettingName()
 
-    val bedtimeModeSuccess =
-        Settings.Global.putInt(resolver, settingBedtimeStr, newSetting)
-    val zenModeSuccess =
-        Settings.Global.putInt(resolver, "zen_mode", newSetting)
+        val ok1 = Settings.Global.putInt(resolver, key, newSetting)
+        val ok2 = Settings.Global.putInt(resolver, "zen_mode", newSetting)
 
-    // -----------------------------
-    // 仅开启 bedtime 才执行
-    // -----------------------------
-    if (newSetting == 2) {
+        if (newSetting == 2) {
+            scheduleSamsungBedtimeLaunch()
+        } else {
+            cancelScheduledBedtime()
+        }
 
-        // 防止重复触发
-        if (!bedtimeTriggered) {
+        return ok1 && ok2
+    }
 
-            val pm = packageManager
-            val intent = Intent().apply {
-                component = ComponentName(
-                    "com.google.android.apps.wearable.settings",
-                    "com.samsung.android.clockwork.settings.advanced.bedtimemode.StBedtimeModeReservedActivity"
-                )
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
+    // ---------------- SAFE DELAY TASK ----------------
+    private fun scheduleSamsungBedtimeLaunch() {
 
-            if (intent.resolveActivity(pm) != null) {
+        if (bedtimeTriggered) return
 
-                Log.d(TAG, "Bedtime ON detected, scheduling launch in 5s")
+        val pm = packageManager
 
-                // 如果已有任务，先取消
-                pendingBedtimeRunnable?.let {
-                    handler.removeCallbacks(it)
-                }
+        val intent = Intent().apply {
+            component = ComponentName(
+                "com.google.android.apps.wearable.settings",
+                "com.samsung.android.clockwork.settings.advanced.bedtimemode.StBedtimeModeReservedActivity"
+            )
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
 
-                val runnable = Runnable {
-                    try {
-                        startActivity(intent)
-                        Log.d(TAG, "Bedtime activity launched after delay")
-                        bedtimeTriggered = true
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to start activity", e)
-                    }
-                }
+        if (intent.resolveActivity(pm) == null) {
+            Log.w(TAG, "Bedtime activity not available")
+            return
+        }
 
-                pendingBedtimeRunnable = runnable
-                handler.postDelayed(runnable, 5000)
+        cancelScheduledBedtime()
+
+        val runnable = Runnable {
+            try {
+                startActivity(intent)
+                bedtimeTriggered = true
+                Log.d(TAG, "Bedtime activity launched (delayed)")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to launch bedtime activity", e)
             }
         }
 
-    } else {
-        // bedtime 关闭 → 重置状态
-        bedtimeTriggered = false
+        pendingBedtimeRunnable = runnable
+        handler.postDelayed(runnable, 3000)
+    }
+
+    private fun cancelScheduledBedtime() {
         pendingBedtimeRunnable?.let {
             handler.removeCallbacks(it)
         }
         pendingBedtimeRunnable = null
+        bedtimeTriggered = false
     }
 
-    return bedtimeModeSuccess && zenModeSuccess
+    // ---------------- LIFECYCLE FIX (关键) ----------------
+    override fun onDestroy() {
+        super.onDestroy()
+
+        // 防止内存泄漏
+        cancelScheduledBedtime()
+
+        Log.d(TAG, "Service destroyed, cleanup done")
     }
 
-        return bedtimeModeSuccess && zenModeSuccess
-    }
-
-    private fun triggerSamsungBedtimeActivity() {
-        try {
-            val intent = Intent().apply {
-                component = ComponentName(
-                    "com.google.android.apps.wearable.settings",
-                    "com.samsung.android.clockwork.settings.advanced.bedtimemode.StBedtimeModeReservedActivity"
-                )
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            startActivity(intent)
-            Log.d(TAG, "三星睡眠模式 Activity 启动成功")
-        } catch (e: Exception) {
-            Log.e(TAG, "无法启动三星 Activity: ${e.message}")
-        }
-    }
-
+    // ---------------- POWER ----------------
     private fun changePowerModeSetting(newSetting: Int): Boolean {
-        val resolver = applicationContext.contentResolver
-        val lowPower = Settings.Global.putInt(resolver, "low_power", newSetting)
-        val restricted = Settings.Global.putInt(resolver, "restricted_device_performance", newSetting)
-        val lowPowerData = Settings.Global.putInt(resolver, "low_power_back_data_off", newSetting)
-        val connectivity = Settings.Secure.putInt(resolver, "sm_connectivity_disable", newSetting)
+        val r = applicationContext.contentResolver
 
-        return lowPower && restricted && lowPowerData && connectivity
+        return Settings.Global.putInt(r, "low_power", newSetting) &&
+                Settings.Global.putInt(r, "restricted_device_performance", newSetting) &&
+                Settings.Global.putInt(r, "low_power_back_data_off", newSetting) &&
+                Settings.Secure.putInt(r, "sm_connectivity_disable", newSetting)
     }
 
+    // ---------------- VIBRATE ----------------
     private fun vibrate() {
         val vibrator = getSystemService<Vibrator>()
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            vibrator?.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK))
+            vibrator?.vibrate(
+                VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
+            )
         } else {
             @Suppress("DEPRECATION")
             vibrator?.vibrate(500)
