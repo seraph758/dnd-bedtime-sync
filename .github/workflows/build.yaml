@@ -2,9 +2,7 @@ name: Build for Android
 
 on:
   release:
-    types:
-      - published
-
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -15,22 +13,48 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Checkout
+      # -------------------------
+      # Checkout（关键修复点）
+      # -------------------------
       - name: Checkout source
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # ✅ 防止拉到不完整/旧状态
 
+      # -------------------------
+      # Debug（强烈建议保留）
+      # -------------------------
+      - name: Show repo state
+        run: |
+          echo "=== COMMIT ==="
+          git rev-parse HEAD
+          echo "=== FILES ==="
+          find . -name "*.kt"
+
+      # -------------------------
       # Java
+      # -------------------------
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: zulu
           java-version: 21
 
+      # -------------------------
       # Gradle permission
+      # -------------------------
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      # Cache
+      # -------------------------
+      # Clean（避免缓存污染）
+      # -------------------------
+      - name: Clean project
+        run: ./gradlew clean
+
+      # -------------------------
+      # Cache Gradle
+      # -------------------------
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
@@ -41,40 +65,36 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      # -------------------------
-      # Build MOBILE
-      # -------------------------
+      # =========================
+      # MOBILE BUILD
+      # =========================
       - name: Build mobile release APK
         run: ./gradlew :mobile:assembleRelease
 
-      # Upload mobile artifact
       - name: Upload mobile APK
         uses: actions/upload-artifact@v4
         with:
           name: Mobile-APK
           path: mobile/build/outputs/apk/release/*.apk
 
-      # Attach mobile APK to GitHub Release
       - name: Attach mobile APK to release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
           files: mobile/build/outputs/apk/release/*.apk
 
-      # -------------------------
-      # Build WEAR
-      # -------------------------
+      # =========================
+      # WEAR BUILD
+      # =========================
       - name: Build wear release APK
         run: ./gradlew :wear:assembleRelease
 
-      # Upload wear artifact
       - name: Upload wear APK
         uses: actions/upload-artifact@v4
         with:
           name: Wear-APK
           path: wear/build/outputs/apk/release/*.apk
 
-      # Attach wear APK to GitHub Release
       - name: Attach wear APK to release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
