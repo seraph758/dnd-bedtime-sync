@@ -14,6 +14,11 @@ import com.google.android.gms.wearable.WearableListenerService
 import it.silleellie.dndsync.shared.PhoneSignal
 import org.apache.commons.lang3.SerializationUtils
 
+import android.os.Handler
+import android.os.Looper
+
+
+
 class DNDSyncListenerService : WearableListenerService() {
     override fun onMessageReceived(messageEvent: MessageEvent) {
         if (messageEvent.path.equals(DND_SYNC_MESSAGE_PATH, ignoreCase = true)) {
@@ -42,6 +47,11 @@ class DNDSyncListenerService : WearableListenerService() {
                     vibrate()
                 }
             }
+
+            private val handler = Handler(Looper.getMainLooper())
+            private var pendingBedtimeRunnable: Runnable? = null
+            private var bedtimeTriggered = false
+
 
             val currentBedtimeState = Settings.Global.getInt(
                 applicationContext.contentResolver, getBedtimeSettingName(), -1
@@ -93,18 +103,66 @@ class DNDSyncListenerService : WearableListenerService() {
     }
 
     private fun changeBedtimeSetting(newSetting: Int): Boolean {
-        val settingBedtimeStr = getBedtimeSettingName()
-        val resolver = applicationContext.contentResolver
+    val settingBedtimeStr = getBedtimeSettingName()
+    val resolver = applicationContext.contentResolver
 
-        // 1. 同步系统全局设置
-        val bedtimeModeSuccess = Settings.Global.putInt(resolver, settingBedtimeStr, newSetting)
-        val zenModeSuccess = Settings.Global.putInt(resolver, "zen_mode", newSetting)
+    val bedtimeModeSuccess =
+        Settings.Global.putInt(resolver, settingBedtimeStr, newSetting)
+    val zenModeSuccess =
+        Settings.Global.putInt(resolver, "zen_mode", newSetting)
 
-        // 2. 仅当开启（值为2）时触发三星特定逻辑
-        if (newSetting == 2 && Build.MANUFACTURER.contains("samsung", ignoreCase = true)) {
-            Log.d(TAG, "检测到三星设备且开启睡眠模式，启动特定 Activity")
-            triggerSamsungBedtimeActivity()
+    // -----------------------------
+    // 仅开启 bedtime 才执行
+    // -----------------------------
+    if (newSetting == 2) {
+
+        // 防止重复触发
+        if (!bedtimeTriggered) {
+
+            val pm = packageManager
+            val intent = Intent().apply {
+                component = ComponentName(
+                    "com.google.android.apps.wearable.settings",
+                    "com.samsung.android.clockwork.settings.advanced.bedtimemode.StBedtimeModeReservedActivity"
+                )
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+
+            if (intent.resolveActivity(pm) != null) {
+
+                Log.d(TAG, "Bedtime ON detected, scheduling launch in 5s")
+
+                // 如果已有任务，先取消
+                pendingBedtimeRunnable?.let {
+                    handler.removeCallbacks(it)
+                }
+
+                val runnable = Runnable {
+                    try {
+                        startActivity(intent)
+                        Log.d(TAG, "Bedtime activity launched after delay")
+                        bedtimeTriggered = true
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to start activity", e)
+                    }
+                }
+
+                pendingBedtimeRunnable = runnable
+                handler.postDelayed(runnable, 5000)
+            }
         }
+
+    } else {
+        // bedtime 关闭 → 重置状态
+        bedtimeTriggered = false
+        pendingBedtimeRunnable?.let {
+            handler.removeCallbacks(it)
+        }
+        pendingBedtimeRunnable = null
+    }
+
+    return bedtimeModeSuccess && zenModeSuccess
+    }
 
         return bedtimeModeSuccess && zenModeSuccess
     }
