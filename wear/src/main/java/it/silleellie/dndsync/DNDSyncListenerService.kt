@@ -152,6 +152,47 @@ class DNDSyncListenerService : WearableListenerService() {
                 && lowPowerBackDataOff && smConnectivityDisable
     }
 
+    // 在 DNDSyncListenerService 类中
+
+    private fun changeBedtimeSetting(newSetting: Int): Boolean {
+    val settingBedtimeStr = getBedtimeSettingName()
+    val resolver = applicationContext.contentResolver
+
+    // 1. 原有的系统设置同步
+    val bedtimeModeSuccess = Settings.Global.putInt(resolver, settingBedtimeStr, newSetting)
+    val zenModeSuccess = Settings.Global.putInt(resolver, "zen_mode", newSetting)
+
+    // 2. 关键修改：仅当 newSetting == 2 (开启) 时运行特定命令
+    if (newSetting == 2) {
+        Log.d(TAG, "Bedtime mode is 2 (ON), triggering Samsung specific activity...")
+        triggerSamsungBedtimeActivity()
+    }
+
+    return bedtimeModeSuccess && zenModeSuccess
+}
+
+/**
+ * 执行你要求的特定三星 Activity 命令
+ */
+private fun triggerSamsungBedtimeActivity() {
+    try {
+        // 相当于 adb shell am start -n ...
+        val intent = Intent().apply {
+            component = ComponentName(
+                "com.google.android.apps.wearable.settings",
+                "com.samsung.android.clockwork.settings.advanced.bedtimemode.StBedtimeModeReservedActivity"
+            )
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        startActivity(intent)
+        Log.d(TAG, "Samsung Bedtime Activity started successfully.")
+    } catch (e: Exception) {
+        // 防止 Activity 不存在或权限问题导致奔溃
+        Log.e(TAG, "Could not start Samsung activity: ${e.message}")
+    }
+}
+
+
     private fun vibrate() {
         val vibrator = getSystemService<Vibrator>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
