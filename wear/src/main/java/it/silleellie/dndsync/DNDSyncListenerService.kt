@@ -16,6 +16,10 @@ import it.silleellie.dndsync.shared.PhoneSignal
 import it.silleellie.dndsync.shared.PreferenceKeys
 import org.apache.commons.lang3.SerializationUtils
 
+import android.content.ComponentName
+import android.content.Intent
+
+
 class DNDSyncListenerService : WearableListenerService() {
     override fun onMessageReceived(messageEvent: MessageEvent) {
         if (messageEvent.getPath().equals(DND_SYNC_MESSAGE_PATH, ignoreCase = true)) {
@@ -112,16 +116,44 @@ class DNDSyncListenerService : WearableListenerService() {
     }
 
     private fun changeBedtimeSetting(newSetting: Int): Boolean {
-        val settingBedtimeStr = getBedtimeSettingName()
-        val bedtimeModeSuccess = Settings.Global.putInt(
-            applicationContext.contentResolver, settingBedtimeStr, newSetting
-        )
-        val zenModeSuccess = Settings.Global.putInt(
-            applicationContext.contentResolver, "zen_mode", newSetting
-        )
+    val settingBedtimeStr = getBedtimeSettingName()
+    val resolver = applicationContext.contentResolver
 
-        return bedtimeModeSuccess && zenModeSuccess
+    [span_3](start_span)// 1. 同步系统全局设置[span_3](end_span)
+    val bedtimeModeSuccess = Settings.Global.putInt(resolver, settingBedtimeStr, newSetting)
+    val zenModeSuccess = Settings.Global.putInt(resolver, "zen_mode", newSetting)
+
+    [span_4](start_span)// 2. 核心逻辑：仅当 newSetting 为 2（开启状态）时触发三星特定 Activity[span_4](end_span)
+    if (newSetting == 2) {
+        Log.d(TAG, "检测到睡眠模式开启 (value: 2)，正在触发三星特定 Activity...")
+        triggerSamsungBedtimeActivity()
     }
+
+    return bedtimeModeSuccess && zenModeSuccess
+}
+
+/**
+ * [span_5](start_span)执行特定的三星 Activity 命令[span_5](end_span)
+ * 效果等同于：adb shell am start -n com.google.android.apps.wearable.settings/...
+ */
+    private fun triggerSamsungBedtimeActivity() {
+    try {
+        val intent = Intent().apply {
+            component = ComponentName(
+                "com.google.android.apps.wearable.settings",
+                "com.samsung.android.clockwork.settings.advanced.bedtimemode.StBedtimeModeReservedActivity"
+            )
+            [span_6](start_span)// 从 Service 启动 Activity 必须添加此 Flag[span_6](end_span)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        startActivity(intent)
+        [span_7](start_span)Log.d(TAG, "三星睡眠模式 Activity 启动成功[span_7](end_span)")
+    } catch (e: Exception) {
+        [span_8](start_span)// 防止在非三星设备或不同系统版本上运行时崩溃[span_8](end_span)
+        Log.e(TAG, "无法启动三星 Activity: ${e.message}")
+    }
+}
+
 
     /**
      * Changes the power mode setting.
@@ -151,46 +183,6 @@ class DNDSyncListenerService : WearableListenerService() {
         return lowPower && restrictedDevicePerformance
                 && lowPowerBackDataOff && smConnectivityDisable
     }
-
-    // 在 DNDSyncListenerService 类中
-
-    private fun changeBedtimeSetting(newSetting: Int): Boolean {
-    val settingBedtimeStr = getBedtimeSettingName()
-    val resolver = applicationContext.contentResolver
-
-    // 1. 原有的系统设置同步
-    val bedtimeModeSuccess = Settings.Global.putInt(resolver, settingBedtimeStr, newSetting)
-    val zenModeSuccess = Settings.Global.putInt(resolver, "zen_mode", newSetting)
-
-    // 2. 关键修改：仅当 newSetting == 2 (开启) 时运行特定命令
-    if (newSetting == 2) {
-        Log.d(TAG, "Bedtime mode is 2 (ON), triggering Samsung specific activity...")
-        triggerSamsungBedtimeActivity()
-    }
-
-    return bedtimeModeSuccess && zenModeSuccess
-}
-
-/**
- * 执行你要求的特定三星 Activity 命令
- */
-private fun triggerSamsungBedtimeActivity() {
-    try {
-        // 相当于 adb shell am start -n ...
-        val intent = Intent().apply {
-            component = ComponentName(
-                "com.google.android.apps.wearable.settings",
-                "com.samsung.android.clockwork.settings.advanced.bedtimemode.StBedtimeModeReservedActivity"
-            )
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        startActivity(intent)
-        Log.d(TAG, "Samsung Bedtime Activity started successfully.")
-    } catch (e: Exception) {
-        // 防止 Activity 不存在或权限问题导致奔溃
-        Log.e(TAG, "Could not start Samsung activity: ${e.message}")
-    }
-}
 
 
     private fun vibrate() {
