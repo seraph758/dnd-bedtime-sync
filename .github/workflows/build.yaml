@@ -60,9 +60,7 @@ jobs:
           ./gradlew :wear:assembleRelease
 
       # -------------------------
-      # 6. 🔥 核心修复：使用 Ubuntu 自带工具链进行对齐与签名
-      # -------------------------
-      - name: Sign and Align APKs
+     - name: Sign and Align APKs
         run: |
           # 1. 从 Secrets 还原密钥文件
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > my-release-key.jks
@@ -74,15 +72,23 @@ jobs:
           echo "Using zipalign: $ZIPALIGN"
           echo "Using apksigner: $APKSIGNER"
           
-          # 3. 对齐并签名手机端 APK
-          $ZIPALIGN -v 4 mobile/build/outputs/apk/release/mobile-release-unsigned.apk mobile-signed.apk
+          # 3. 🧠 智能寻找手机端生成的原始 APK 文件
+          RAW_MOBILE_APK=$(find mobile/build/outputs/apk/release/ -name "*.apk" | head -n 1)
+          echo "Found raw mobile APK: $RAW_MOBILE_APK"
+          
+          # 4. 对齐并签名手机端 APK
+          $ZIPALIGN -v 4 "$RAW_MOBILE_APK" mobile-signed.apk
           $APKSIGNER sign --ks my-release-key.jks --ks-pass pass:"${{ secrets.KEYSTORE_PASSWORD }}" --ks-key-alias "${{ secrets.KEY_ALIAS }}" --key-pass pass:"${{ secrets.KEY_PASSWORD }}" mobile-signed.apk
           
-          # 4. 对齐并签名手表端 APK
-          $ZIPALIGN -v 4 wear/build/outputs/apk/release/wear-release-unsigned.apk wear-signed.apk
+          # 5. 🧠 智能寻找手表端生成的原始 APK 文件
+          RAW_WEAR_APK=$(find wear/build/outputs/apk/release/ -name "*.apk" | head -n 1)
+          echo "Found raw wear APK: $RAW_WEAR_APK"
+          
+          # 6. 对齐并签名手表端 APK
+          $ZIPALIGN -v 4 "$RAW_WEAR_APK" wear-signed.apk
           $APKSIGNER sign --ks my-release-key.jks --ks-pass pass:"${{ secrets.KEYSTORE_PASSWORD }}" --ks-key-alias "${{ secrets.KEY_ALIAS }}" --key-pass pass:"${{ secrets.KEY_PASSWORD }}" wear-signed.apk
           
-          # 5. 清理临时密钥
+          # 7. 清理临时密钥
           rm my-release-key.jks
 
       # =========================
