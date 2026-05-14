@@ -15,7 +15,7 @@ import androidx.core.app.NotificationCompat
 import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.WearableListenerService
 import it.silleellie.dndsync.shared.PhoneSignal
-import it.silleellie.dndsync.shared.SerializationUtils
+import org.apache.commons.lang3.SerializationUtils // 【修改点】换成了官方的序列化库
 
 class DNDSyncListenerService : WearableListenerService() {
 
@@ -66,12 +66,11 @@ class DNDSyncListenerService : WearableListenerService() {
         try {
 
             // ------------------------------------------------
-            // JSON -> PhoneSignal（通过 SerializationUtils）
+            // ByteArray -> PhoneSignal（通过 Apache Commons SerializationUtils）
             // ------------------------------------------------
-            val json = String(messageEvent.data, Charsets.UTF_8)
-
+            // 【修改点】直接反序列化字节数组，不走 JSON String，与手机端发送格式对齐
             val phoneSignal =
-                SerializationUtils.decode<PhoneSignal>(json)
+                SerializationUtils.deserialize<PhoneSignal>(messageEvent.data)
 
             val nm =
                 getSystemService(NOTIFICATION_SERVICE) as NotificationManager
