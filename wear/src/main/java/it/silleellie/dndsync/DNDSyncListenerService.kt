@@ -1,5 +1,6 @@
 package it.silleellie.dndsync
 
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -11,7 +12,6 @@ import android.content.IntentFilter
 import android.os.*
 import android.provider.Settings
 import android.util.Log
-import androidx.core.app.NotificationCompat
 import androidx.core.content.getSystemService
 import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.WearableListenerService
@@ -60,7 +60,7 @@ class DNDSyncListenerService : WearableListenerService() {
                 }
             }
 
-            // Bedtime 处理
+            // Bedtime 处理 + 全屏循环
             phoneSignal.bedtimeState?.let { target ->
                 val current = Settings.Global.getInt(contentResolver, getBedtimeSettingName(), -1)
                 if (target != current) {
@@ -83,6 +83,7 @@ class DNDSyncListenerService : WearableListenerService() {
     private fun startBedtimeCycle() {
         if (bedtimeCycleRunning) return
         bedtimeCycleRunning = true
+        Log.d(TAG, "启动 Bedtime 全屏循环")
         showFullScreenUI()
         registerScreenReceiver()
     }
@@ -92,6 +93,7 @@ class DNDSyncListenerService : WearableListenerService() {
         handler.removeCallbacks(fullscreenRunnable)
         unregisterScreenReceiver()
         getSystemService<NotificationManager>()?.cancel(NOTIF_ID)
+        Log.d(TAG, "停止 Bedtime 全屏循环")
     }
 
     private fun registerScreenReceiver() {
@@ -117,6 +119,7 @@ class DNDSyncListenerService : WearableListenerService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(screenReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
+            @Suppress("DEPRECATION")
             registerReceiver(screenReceiver, filter)
         }
     }
@@ -152,12 +155,12 @@ class DNDSyncListenerService : WearableListenerService() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+        val notification = Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
             .setContentTitle("睡眠模式已同步")
             .setContentText("按返回键退出 • 抬手会再次显示")
-            .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setPriority(Notification.PRIORITY_MAX)
+            .setCategory(Notification.CATEGORY_ALARM)
             .setOngoing(true)
             .setSilent(true)
             .setFullScreenIntent(pendingIntent, true)
@@ -172,11 +175,14 @@ class DNDSyncListenerService : WearableListenerService() {
         val nm = getSystemService<NotificationManager>()!!
         if (nm.getNotificationChannel(CHANNEL_ID) != null) return
 
-        val channel = NotificationChannel(CHANNEL_ID, "Bedtime Sync", NotificationManager.IMPORTANCE_HIGH)
-            .apply {
-                setSound(null, null)
-                enableVibration(false)
-            }
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            "Bedtime Sync",
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            setSound(null, null)
+            enableVibration(false)
+        }
         nm.createNotificationChannel(channel)
     }
 
@@ -184,6 +190,7 @@ class DNDSyncListenerService : WearableListenerService() {
     private fun changeDndSetting(nm: NotificationManager, newSetting: Int) {
         if (nm.isNotificationPolicyAccessGranted()) {
             nm.setInterruptionFilter(newSetting)
+            Log.d(TAG, "DND set to $newSetting")
         }
     }
 
