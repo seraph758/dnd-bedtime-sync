@@ -6,10 +6,7 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    
-    <uses-permission
-        android:name="android.permission.WRITE_SECURE_SETTINGS"
-        tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" tools:ignore="ProtectedPermissions" />
 
     <uses-feature android:name="android.hardware.type.watch" />
 
@@ -22,7 +19,9 @@
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.DNDSync">
+        android:theme="@style/Theme.DNDSync"
+        tools:replace="android:theme,android:label"
+        tools:ignore="GoogleAppIndexingWarning">
 
         <activity
             android:name="it.silleellie.dndsync.MainActivity"
@@ -34,17 +33,10 @@
             </intent-filter>
         </activity>
 
-        <uses-library
-            android:name="com.google.android.wearable"
-            android:required="true" />
+        <uses-library android:name="com.google.android.wearable" android:required="true" />
 
-        <meta-data
-            android:name="com.google.android.wearable.standalone"
-            android:value="false" />
-
-        <meta-data
-            android:name="com.google.android.gms.version"
-            android:value="@integer/google_play_services_version" />
+        <meta-data android:name="com.google.android.wearable.standalone" android:value="false" />
+        <meta-data android:name="com.google.android.gms.version" android:value="@integer/google_play_services_version" />
 
         <service
             android:name="it.silleellie.dndsync.DNDSyncListenerService"
@@ -53,10 +45,7 @@
             android:permission="com.google.android.gms.permission.BIND_LISTENER_INTENT">
             <intent-filter>
                 <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
-                <data
-                    android:host="*"
-                    android:pathPrefix="/wear-dnd-sync"
-                    android:scheme="wear" />
+                <data android:host="*" android:pathPrefix="/wear-dnd-sync" android:scheme="wear" />
             </intent-filter>
         </service>
 
