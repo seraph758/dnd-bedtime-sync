@@ -60,7 +60,10 @@ jobs:
           ./gradlew :wear:assembleRelease
 
       # -------------------------
-     - name: Sign and Align APKs
+      # -------------------------
+      # 6. 🔥 核心修复：智能搜索并使用 Ubuntu 自带工具链进行对齐与签名
+      # -------------------------
+      - name: Sign and Align APKs
         run: |
           # 1. 从 Secrets 还原密钥文件
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > my-release-key.jks
