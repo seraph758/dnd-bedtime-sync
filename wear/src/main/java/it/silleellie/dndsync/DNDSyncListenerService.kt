@@ -37,7 +37,7 @@ class DNDSyncListenerService : WearableListenerService() {
         var isSyncingFromPhone = false
     }
 
-    override fun onMessageReceived(messageEvent: MessageEvent) {
+        override fun onMessageReceived(messageEvent: MessageEvent) {
         if (!messageEvent.path.equals(DND_SYNC_MESSAGE_PATH, ignoreCase = true)) {
             super.onMessageReceived(messageEvent)
             return
@@ -49,27 +49,49 @@ class DNDSyncListenerService : WearableListenerService() {
             val phoneSignal = SerializationUtils.deserialize<PhoneSignal>(messageEvent.data)
             val nm = getSystemService<NotificationManager>()!!
 
-            // DND 处理
-            phoneSignal.dndState?.let { target ->
+            // ================= 核心修复：兼容手机端的 5 和 6 =================
+            val rawDndState = phoneSignal.dndState
+            var targetDnd: Int? = rawDndState
+            var targetBedtime = phoneSignal.bedtimeState
+
+            // 拦截手机端发来的魔法数字 5(开启睡眠) 和 6(关闭睡眠)
+            if (rawDndState == 5) {
+                targetBedtime = 1
+                targetDnd = null // 置空，防止把它当成普通勿扰模式去处理
+            } else if (rawDndState == 6) {
+                targetBedtime = 0
+                targetDnd = null 
+            }
+            // ===============================================================
+
+            // 1. DND 处理 (只处理合法的 1~4)
+            targetDnd?.let { target ->
                 if (isSyncingFromPhone) return@let
                 val current = nm.currentInterruptionFilter
-                if (target != current) {
+                if (target != current && target in 1..4) {
                     isSyncingFromPhone = true
                     changeDndSetting(nm, target)
                     handler.postDelayed({ isSyncingFromPhone = false }, 2500)
                 }
             }
 
-            // Bedtime 处理
-            phoneSignal.bedtimeState?.let { target ->
+            // 2. Bedtime 处理
+            targetBedtime?.let { target ->
                 val current = Settings.Global.getInt(contentResolver, getBedtimeSettingName(), -1)
                 if (target != current) {
+                    // 当睡眠模式开启时，同时开启勿扰(2代表PRIORITY)，关闭时关闭勿扰(1代表ALL)
                     val dndState = if (target == 1) 2 else 1
                     changeDndSetting(nm, dndState)
+                    
                     changeBedtimeSetting(target)
 
-                    if (phoneSignal.powersavePref) changePowerModeSetting(target)
-                    if (phoneSignal.vibratePref) vibrate()
+                    // 加 try-catch 防御一下：以防旧版 PhoneSignal 类中没有这俩字段导致崩溃
+                    try {
+                        if (phoneSignal.powersavePref) changePowerModeSetting(target)
+                        if (phoneSignal.vibratePref) vibrate()
+                    } catch (e: Exception) {
+                        Log.d(TAG, "旧版对象缺少扩展字段，跳过省电/振动设置")
+                    }
 
                     if (target == 1) startBedtimeCycle() else stopBedtimeCycle()
                 }
@@ -78,6 +100,7 @@ class DNDSyncListenerService : WearableListenerService() {
             Log.e(TAG, "处理消息失败", e)
         }
     }
+
 
     // ====================== Bedtime 全屏循环提醒 ======================
     private fun startBedtimeCycle() {
