@@ -30,19 +30,7 @@ jobs:
           java-version: 21
 
       # -------------------------
-      # 3. 🔥 核心修复：显式安装缺少的 Android Build-Tools 29.0.3
-      # -------------------------
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          log-accepted-android-sdk-licenses: false
-          # 显式下载签名工具所需的 29.0.3 版本的编译工具和对应的平台
-          packages: |
-            build-tools;29.0.3
-            platforms;android-29
-
-      # -------------------------
-      # 4. Gradle 权限与清理
+      # 3. Gradle 权限与清理
       # -------------------------
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
@@ -51,7 +39,7 @@ jobs:
         run: ./gradlew clean
 
       # -------------------------
-      # 5. 缓存以加速构建
+      # 4. 缓存以加速构建
       # -------------------------
       - name: Cache Gradle
         uses: actions/cache@v4
@@ -63,57 +51,65 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      # =========================
-      # 手机端：编译与自动签名
-      # =========================
-      - name: Build mobile release APK
-        run: ./gradlew :mobile:assembleRelease
+      # -------------------------
+      # 5. 编译手机端与手表端 Release APK
+      # -------------------------
+      - name: Build All Release APKs
+        run: |
+          ./gradlew :mobile:assembleRelease
+          ./gradlew :wear:assembleRelease
 
-      - name: Sign Mobile APK
-        id: sign_mobile
-        uses: r0adkll/sign-android-release@v1
-        with:
-          releaseDirectory: mobile/build/outputs/apk/release
-          signingKeyBase64: ${{ secrets.KEYSTORE_BASE64 }}
-          alias: ${{ secrets.KEY_ALIAS }}
-          keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
-          keyPassword: ${{ secrets.KEY_PASSWORD }}
+      # -------------------------
+      # 6. 🔥 核心修复：使用 Ubuntu 自带工具链进行对齐与签名
+      # -------------------------
+      - name: Sign and Align APKs
+        run: |
+          # 1. 从 Secrets 还原密钥文件
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > my-release-key.jks
+          
+          # 2. 自动寻找系统内置的最新的 zipalign 和 apksigner
+          ZIPALIGN=$(find $ANDROID_HOME/build-tools/ -name zipalign | sort -V | tail -n 1)
+          APKSIGNER=$(find $ANDROID_HOME/build-tools/ -name apksigner | sort -V | tail -n 1)
+          
+          echo "Using zipalign: $ZIPALIGN"
+          echo "Using apksigner: $APKSIGNER"
+          
+          # 3. 对齐并签名手机端 APK
+          $ZIPALIGN -v 4 mobile/build/outputs/apk/release/mobile-release-unsigned.apk mobile-signed.apk
+          $APKSIGNER sign --ks my-release-key.jks --ks-pass pass:"${{ secrets.KEYSTORE_PASSWORD }}" --ks-key-alias "${{ secrets.KEY_ALIAS }}" --key-pass pass:"${{ secrets.KEY_PASSWORD }}" mobile-signed.apk
+          
+          # 4. 对齐并签名手表端 APK
+          $ZIPALIGN -v 4 wear/build/outputs/apk/release/wear-release-unsigned.apk wear-signed.apk
+          $APKSIGNER sign --ks my-release-key.jks --ks-pass pass:"${{ secrets.KEYSTORE_PASSWORD }}" --ks-key-alias "${{ secrets.KEY_ALIAS }}" --key-pass pass:"${{ secrets.KEY_PASSWORD }}" wear-signed.apk
+          
+          # 5. 清理临时密钥
+          rm my-release-key.jks
 
+      # =========================
+      # 7. 上传手机端 APK Artifact
+      # =========================
       - name: Upload mobile APK
         uses: actions/upload-artifact@v4
         with:
           name: Mobile-APK
-          path: ${{ steps.sign_mobile.outputs.signedReleaseFile }}
+          path: mobile-signed.apk
 
       # =========================
-      # 手表端：编译与自动签名（使用相同密钥）
+      # 8. 上传手表端 APK Artifact
       # =========================
-      - name: Build wear release APK
-        run: ./gradlew :wear:assembleRelease
-
-      - name: Sign Wear APK
-        id: sign_wear
-        uses: r0adkll/sign-android-release@v1
-        with:
-          releaseDirectory: wear/build/outputs/apk/release
-          signingKeyBase64: ${{ secrets.KEYSTORE_BASE64 }}
-          alias: ${{ secrets.KEY_ALIAS }}
-          keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
-          keyPassword: ${{ secrets.KEY_PASSWORD }}
-
       - name: Upload wear APK
         uses: actions/upload-artifact@v4
         with:
           name: Wear-APK
-          path: ${{ steps.sign_wear.outputs.signedReleaseFile }}
+          path: wear-signed.apk
 
       # =========================
-      # 自动关联发布到 Release
+      # 9. 自动关联发布到 Release
       # =========================
       - name: Attach APKs to release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            ${{ steps.sign_mobile.outputs.signedReleaseFile }}
-            ${{ steps.sign_wear.outputs.signedReleaseFile }}
+            mobile-signed.apk
+            wear-signed.apk
