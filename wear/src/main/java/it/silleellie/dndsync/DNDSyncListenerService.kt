@@ -47,63 +47,42 @@ class DNDSyncListenerService : WearableListenerService() {
 
         try {
             val phoneSignal = SerializationUtils.deserialize<PhoneSignal>(messageEvent.data)
-
-            val mNotificationManager = getSystemService<NotificationManager>()!!
+            val nm = getSystemService<NotificationManager>()!!
 
             // DND 处理
-            phoneSignal.dndState?.let { targetDnd ->
-                if (isSyncingFromPhone) {
-                    Log.d(TAG, "DND 正在同步中，忽略回环")
-                    return@let
-                }
-
-                val currentDndState = mNotificationManager.currentInterruptionFilter
-                if (targetDnd != currentDndState) {
-                    Log.d(TAG, "同步 DND: $currentDndState -> $targetDnd")
+            phoneSignal.dndState?.let { target ->
+                if (isSyncingFromPhone) return@let
+                val current = nm.currentInterruptionFilter
+                if (target != current) {
                     isSyncingFromPhone = true
-                    changeDndSetting(mNotificationManager, targetDnd)
+                    changeDndSetting(nm, target)
                     handler.postDelayed({ isSyncingFromPhone = false }, 2500)
                 }
             }
 
-            // Bedtime 处理 + 全屏循环
-            phoneSignal.bedtimeState?.let { targetBedtime ->
-                val currentBedtimeState = Settings.Global.getInt(
-                    contentResolver, getBedtimeSettingName(), -1
-                )
+            // Bedtime 处理
+            phoneSignal.bedtimeState?.let { target ->
+                val current = Settings.Global.getInt(contentResolver, getBedtimeSettingName(), -1)
+                if (target != current) {
+                    val dndState = if (target == 1) 2 else 1
+                    changeDndSetting(nm, dndState)
+                    changeBedtimeSetting(target)
 
-                if (targetBedtime != currentBedtimeState) {
-                    Log.d(TAG, "同步 Bedtime: $currentBedtimeState -> $targetBedtime")
-
-                    val dndState = if (targetBedtime == 1) 2 else 1
-                    changeDndSetting(mNotificationManager, dndState)
-
-                    changeBedtimeSetting(targetBedtime)
-
-                    if (phoneSignal.powersavePref) {
-                        changePowerModeSetting(targetBedtime)
-                    }
-
+                    if (phoneSignal.powersavePref) changePowerModeSetting(target)
                     if (phoneSignal.vibratePref) vibrate()
 
-                    if (targetBedtime == 1) {
-                        startBedtimeCycle()
-                    } else {
-                        stopBedtimeCycle()
-                    }
+                    if (target == 1) startBedtimeCycle() else stopBedtimeCycle()
                 }
             }
-
         } catch (e: Exception) {
-            Log.e(TAG, "处理同步消息失败", e)
+            Log.e(TAG, "处理消息失败", e)
         }
     }
 
-    // ====================== Bedtime 全屏循环提醒 ======================
+    // ====================== Bedtime 全屏循环 ======================
     private fun startBedtimeCycle() {
         if (bedtimeCycleRunning) return
         bedtimeCycleRunning = true
-        Log.d(TAG, "启动 Bedtime 全屏循环")
         showFullScreenUI()
         registerScreenReceiver()
     }
@@ -113,7 +92,6 @@ class DNDSyncListenerService : WearableListenerService() {
         handler.removeCallbacks(fullscreenRunnable)
         unregisterScreenReceiver()
         getSystemService<NotificationManager>()?.cancel(NOTIF_ID)
-        Log.d(TAG, "停止 Bedtime 全屏循环")
     }
 
     private fun registerScreenReceiver() {
@@ -139,7 +117,6 @@ class DNDSyncListenerService : WearableListenerService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(screenReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
-            @Suppress("DEPRECATION")
             registerReceiver(screenReceiver, filter)
         }
     }
@@ -178,7 +155,7 @@ class DNDSyncListenerService : WearableListenerService() {
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
             .setContentTitle("睡眠模式已同步")
-            .setContentText("按返回键退出 • 熄屏后再抬手将再次显示")
+            .setContentText("按返回键退出 • 抬手会再次显示")
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setOngoing(true)
@@ -195,40 +172,35 @@ class DNDSyncListenerService : WearableListenerService() {
         val nm = getSystemService<NotificationManager>()!!
         if (nm.getNotificationChannel(CHANNEL_ID) != null) return
 
-        val channel = NotificationChannel(
-            CHANNEL_ID, "Bedtime Sync", NotificationManager.IMPORTANCE_HIGH
-        ).apply {
-            setSound(null, null)
-            enableVibration(false)
-        }
+        val channel = NotificationChannel(CHANNEL_ID, "Bedtime Sync", NotificationManager.IMPORTANCE_HIGH)
+            .apply {
+                setSound(null, null)
+                enableVibration(false)
+            }
         nm.createNotificationChannel(channel)
     }
 
     // ====================== 原有方法 ======================
-    private fun changeDndSetting(mNotificationManager: NotificationManager, newSetting: Int) {
-        if (mNotificationManager.isNotificationPolicyAccessGranted()) {
-            mNotificationManager.setInterruptionFilter(newSetting)
-            Log.d(TAG, "DND set to $newSetting")
+    private fun changeDndSetting(nm: NotificationManager, newSetting: Int) {
+        if (nm.isNotificationPolicyAccessGranted()) {
+            nm.setInterruptionFilter(newSetting)
         }
     }
 
-    private fun getBedtimeSettingName(): String {
-        return if (Build.MANUFACTURER == "samsung") "setting_bedtime_mode_running_state" else "bedtime_mode"
-    }
+    private fun getBedtimeSettingName(): String =
+        if (Build.MANUFACTURER == "samsung") "setting_bedtime_mode_running_state" else "bedtime_mode"
 
-    private fun changeBedtimeSetting(newSetting: Int): Boolean {
-        val settingBedtimeStr = getBedtimeSettingName()
-        Settings.Global.putInt(contentResolver, settingBedtimeStr, newSetting)
+    private fun changeBedtimeSetting(newSetting: Int) {
+        val name = getBedtimeSettingName()
+        Settings.Global.putInt(contentResolver, name, newSetting)
         Settings.Global.putInt(contentResolver, "zen_mode", newSetting)
-        return true
     }
 
-    private fun changePowerModeSetting(newSetting: Int): Boolean {
+    private fun changePowerModeSetting(newSetting: Int) {
         Settings.Global.putInt(contentResolver, "low_power", newSetting)
         Settings.Global.putInt(contentResolver, "restricted_device_performance", newSetting)
         Settings.Global.putInt(contentResolver, "low_power_back_data_off", newSetting)
         Settings.Secure.putInt(contentResolver, "sm_connectivity_disable", newSetting)
-        return true
     }
 
     private fun vibrate() {
