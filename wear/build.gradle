@@ -19,7 +19,7 @@ android {
     defaultConfig {
         applicationId "it.silleellie.dndsync"
         minSdk 30
-        targetSdk 31
+        targetSdk 33
         versionCode 5
         versionName "3.2"
     }
