@@ -11,6 +11,7 @@ import android.content.IntentFilter
 import android.os.*
 import android.provider.Settings
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import androidx.core.content.getSystemService
 import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.WearableListenerService
@@ -30,7 +31,7 @@ class DNDSyncListenerService : WearableListenerService() {
         private const val DND_SYNC_MESSAGE_PATH = "/wear-dnd-sync"
         private const val CHANNEL_ID = "samsung_bedtime_sync"
         private const val NOTIF_ID = 888
-        private const val FULLSCREEN_COOLDOWN_MS = 1500L   // 亮屏响应冷却时间
+        private const val FULLSCREEN_COOLDOWN_MS = 1500L
 
         @Volatile
         var isSyncingFromPhone = false
@@ -49,7 +50,7 @@ class DNDSyncListenerService : WearableListenerService() {
 
             val mNotificationManager = getSystemService<NotificationManager>()!!
 
-            // ==================== DND 处理 ====================
+            // DND 处理
             phoneSignal.dndState?.let { targetDnd ->
                 if (isSyncingFromPhone) {
                     Log.d(TAG, "DND 正在同步中，忽略回环")
@@ -62,13 +63,11 @@ class DNDSyncListenerService : WearableListenerService() {
                     isSyncingFromPhone = true
                     changeDndSetting(mNotificationManager, targetDnd)
 
-                    handler.postDelayed({
-                        isSyncingFromPhone = false
-                    }, 2500)
+                    handler.postDelayed({ isSyncingFromPhone = false }, 2500)
                 }
             }
 
-            // ==================== Bedtime 处理 ====================
+            // Bedtime 处理
             phoneSignal.bedtimeState?.let { targetBedtime ->
                 val currentBedtimeState = Settings.Global.getInt(
                     contentResolver, getBedtimeSettingName(), -1
@@ -77,24 +76,18 @@ class DNDSyncListenerService : WearableListenerService() {
                 if (targetBedtime != currentBedtimeState) {
                     Log.d(TAG, "同步 Bedtime: $currentBedtimeState -> $targetBedtime")
 
-                    // 同步 Bedtime（同时处理 DND）
                     val dndState = if (targetBedtime == 1) 2 else 1
                     changeDndSetting(mNotificationManager, dndState)
 
                     val bedtimeSuccess = changeBedtimeSetting(targetBedtime)
-                    if (bedtimeSuccess) {
-                        Log.d(TAG, "Bedtime mode toggled successfully")
-                    }
+                    if (bedtimeSuccess) Log.d(TAG, "Bedtime mode toggled successfully")
 
                     if (phoneSignal.powersavePref) {
                         changePowerModeSetting(targetBedtime)
                     }
 
-                    if (phoneSignal.vibratePref) {
-                        vibrate()
-                    }
+                    if (phoneSignal.vibratePref) vibrate()
 
-                    // 启动或停止 Bedtime 全屏循环
                     if (targetBedtime == 1) {
                         startBedtimeCycle()
                     } else {
@@ -113,7 +106,7 @@ class DNDSyncListenerService : WearableListenerService() {
         if (bedtimeCycleRunning) return
         bedtimeCycleRunning = true
         Log.d(TAG, "启动 Bedtime 全屏循环模式")
-        showFullScreenUI()                    // 立即弹出一次
+        showFullScreenUI()
         registerScreenReceiver()
     }
 
@@ -121,7 +114,7 @@ class DNDSyncListenerService : WearableListenerService() {
         bedtimeCycleRunning = false
         handler.removeCallbacks(fullscreenRunnable)
         unregisterScreenReceiver()
-        (getSystemService<NotificationManager>())?.cancel(NOTIF_ID)
+        getSystemService<NotificationManager>()?.cancel(NOTIF_ID)
         Log.d(TAG, "停止 Bedtime 全屏循环模式")
     }
 
@@ -225,7 +218,7 @@ class DNDSyncListenerService : WearableListenerService() {
         nm.createNotificationChannel(channel)
     }
 
-    // ====================== 原有方法保持不变 ======================
+    // ====================== 原有功能方法 ======================
     private fun changeDndSetting(mNotificationManager: NotificationManager, newSetting: Int) {
         if (mNotificationManager.isNotificationPolicyAccessGranted()) {
             mNotificationManager.setInterruptionFilter(newSetting)
@@ -241,21 +234,14 @@ class DNDSyncListenerService : WearableListenerService() {
 
     private fun changeBedtimeSetting(newSetting: Int): Boolean {
         val settingBedtimeStr = getBedtimeSettingName()
-        val bedtimeModeSuccess = Settings.Global.putInt(
-            contentResolver, settingBedtimeStr, newSetting
-        )
-        val zenModeSuccess = Settings.Global.putInt(
-            contentResolver, "zen_mode", newSetting
-        )
+        val bedtimeModeSuccess = Settings.Global.putInt(contentResolver, settingBedtimeStr, newSetting)
+        val zenModeSuccess = Settings.Global.putInt(contentResolver, "zen_mode", newSetting)
         return bedtimeModeSuccess && zenModeSuccess
     }
 
     private fun changePowerModeSetting(newSetting: Int): Boolean {
-        // 原有 Power Saver 逻辑保持不变
         val lowPower = Settings.Global.putInt(contentResolver, "low_power", newSetting)
-        val restrictedDevicePerformance = Settings.Global.putInt(
-            contentResolver, "restricted_device_performance", newSetting
-        )
+        val restrictedDevicePerformance = Settings.Global.putInt(contentResolver, "restricted_device_performance", newSetting)
         val lowPowerBackDataOff = Settings.Global.putInt(contentResolver, "low_power_back_data_off", newSetting)
         val smConnectivityDisable = Settings.Secure.putInt(contentResolver, "sm_connectivity_disable", newSetting)
 
