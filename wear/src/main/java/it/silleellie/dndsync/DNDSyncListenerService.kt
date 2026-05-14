@@ -31,7 +31,10 @@ class DNDSyncListenerService : WearableListenerService() {
         private const val DND_SYNC_MESSAGE_PATH = "/wear-dnd-sync"
         private const val CHANNEL_ID = "samsung_bedtime_sync"
         private const val NOTIF_ID = 888
-        private const val FULLSCREEN_COOLDOWN_MS = 1500L     // 优化后的响应速度
+        private const val FULLSCREEN_COOLDOWN_MS = 1500L
+
+        @Volatile
+        var isSyncingFromPhone = false
     }
 
     override fun onMessageReceived(messageEvent: MessageEvent) {
@@ -103,7 +106,7 @@ class DNDSyncListenerService : WearableListenerService() {
 
         bedtimeCycleRunning = true
         Log.d(TAG, "启动 Bedtime Cycle")
-        showFullScreenUI()           // 立即显示一次
+        showFullScreenUI()
         registerScreenReceiver()
     }
 
@@ -178,17 +181,11 @@ class DNDSyncListenerService : WearableListenerService() {
                 "com.google.android.apps.wearable.settings",
                 "com.samsung.android.clockwork.settings.advanced.bedtimemode.StBedtimeModeReservedActivity"
             )
-            addFlags(
-                Intent.FLAG_ACTIVITY_NEW_TASK or
-                Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                Intent.FLAG_ACTIVITY_SINGLE_TOP
-            )
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
 
         val pendingIntent = PendingIntent.getActivity(
-            this,
-            0,
-            intent,
+            this, 0, intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -241,11 +238,7 @@ class DNDSyncListenerService : WearableListenerService() {
 
     private fun updateBedtimeSettings(value: Int) {
         try {
-            Settings.Global.putInt(
-                contentResolver,
-                "setting_bedtime_mode_running_state",
-                value
-            )
+            Settings.Global.putInt(contentResolver, "setting_bedtime_mode_running_state", value)
         } catch (e: Exception) {
             Log.e(TAG, "更新 Bedtime 设置失败", e)
         }
