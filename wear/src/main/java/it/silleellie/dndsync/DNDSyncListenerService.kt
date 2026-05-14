@@ -60,7 +60,7 @@ class DNDSyncListenerService : WearableListenerService() {
                 }
             }
 
-            // Bedtime 处理 + 全屏循环
+            // Bedtime 处理
             phoneSignal.bedtimeState?.let { target ->
                 val current = Settings.Global.getInt(contentResolver, getBedtimeSettingName(), -1)
                 if (target != current) {
@@ -79,7 +79,7 @@ class DNDSyncListenerService : WearableListenerService() {
         }
     }
 
-    // ====================== Bedtime 全屏循环 ======================
+    // ====================== Bedtime 全屏循环提醒 ======================
     private fun startBedtimeCycle() {
         if (bedtimeCycleRunning) return
         bedtimeCycleRunning = true
@@ -162,7 +162,8 @@ class DNDSyncListenerService : WearableListenerService() {
             .setPriority(Notification.PRIORITY_MAX)
             .setCategory(Notification.CATEGORY_ALARM)
             .setOngoing(true)
-            .setSilent(true)
+            .setSound(null, null)           // 静音
+            .setVibrate(null)               // 无振动
             .setFullScreenIntent(pendingIntent, true)
             .setAutoCancel(false)
             .build()
@@ -176,9 +177,7 @@ class DNDSyncListenerService : WearableListenerService() {
         if (nm.getNotificationChannel(CHANNEL_ID) != null) return
 
         val channel = NotificationChannel(
-            CHANNEL_ID,
-            "Bedtime Sync",
-            NotificationManager.IMPORTANCE_HIGH
+            CHANNEL_ID, "Bedtime Sync", NotificationManager.IMPORTANCE_HIGH
         ).apply {
             setSound(null, null)
             enableVibration(false)
