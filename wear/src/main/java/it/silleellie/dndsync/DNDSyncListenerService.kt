@@ -66,7 +66,7 @@ class DNDSyncListenerService : WearableListenerService() {
             // 【关键修改】显式指定 UTF_8，防止极端魔改系统乱码
             val json = String(messageEvent.data, Charsets.UTF_8)
 
-            val phoneSignal = Json.decodeFromString<PhoneSignal>(json)
+            val phoneSignal = Json.decodeFromString<PhoneSignal>(jsonString)
 
             val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
 
