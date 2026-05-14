@@ -50,7 +50,6 @@ class DNDSyncListenerService : WearableListenerService() {
                 var bedtimeState = phoneSignal.bedtimeState
 
                 // 🔥 核心修复：拦截并转换手机发来的非标准勿扰值 5 和 6
-                // 这样既把睡眠暗号存了下来，又洗白了 dndState，防止调用系统底层引发 Crash 阻断后续代码
                 if (dndState == 5) {
                     bedtimeState = 1
                     dndState = null 
@@ -97,7 +96,7 @@ class DNDSyncListenerService : WearableListenerService() {
                     }
                 }
 
-                // ====================== 3. 全屏幕循环提醒功能（完全保留，安全且精准触发） ======================
+                // ====================== 3. 全屏幕循环提醒功能（安全且精准触发） ======================
                 if (bedtimeState == 1) {
                     startBedtimeCycle()
                 } else if (bedtimeState == 0) {
@@ -158,17 +157,14 @@ class DNDSyncListenerService : WearableListenerService() {
 
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(CHANNEL_ID, "Bedtime Sync", NotificationManager.IMPORTANCE_HIGH).apply {
-                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
-            }
+            val channel = NotificationChannel(CHANNEL_ID, "Bedtime Sync", NotificationManager.IMPORTANCE_HIGH)
+            channel.lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             nm.createNotificationChannel(channel)
         }
 
-        val fullScreenIntent = Intent().setComponent(
-            ComponentName("it.silleellie.dndsync", "it.silleellie.dndsync.MainActivity")
-        ).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        }
+        val fullScreenIntent = Intent()
+        fullScreenIntent.setComponent(ComponentName("it.silleellie.dndsync", "it.silleellie.dndsync.MainActivity"))
+        fullScreenIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
 
         val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -177,16 +173,23 @@ class DNDSyncListenerService : WearableListenerService() {
         }
         val fullScreenPendingIntent = PendingIntent.getActivity(this, 0, fullScreenIntent, flags)
 
-        val notificationBuilder = androidx.core.app.NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(mipmap.ic_launcher)
-            .setContentTitle("睡眠模式已同步")
-            .setContentText("正在保持睡眠同步中...")
-            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
-            .setCategory(androidx.core.app.NotificationCompat.CATEGORY_CALL)
-            .setFullScreenIntent(fullScreenPendingIntent, true)
-            .setVisibility(androidx.core.app.NotificationCompat.VISIBILITY_PUBLIC)
+        // ✅ 彻底洗白修复：不使用容易在网页端引发链式错误的方法，采用逐行显式配置
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+        }
 
-        nm.notify(NOTIF_ID, notificationBuilder.build())
+        builder.setSmallIcon(applicationContext.applicationInfo.icon)
+        builder.setContentTitle("睡眠模式已同步")
+        builder.setContentText("正在保持睡眠同步中...")
+        builder.setPriority(Notification.PRIORITY_HIGH)
+        builder.setCategory(Notification.CATEGORY_CALL)
+        builder.setFullScreenIntent(fullScreenPendingIntent, true)
+        builder.setVisibility(Notification.VISIBILITY_PUBLIC)
+
+        nm.notify(NOTIF_ID, builder.build())
         Log.d(TAG, "全屏幕提醒通知已发送")
     }
 
