@@ -199,7 +199,7 @@ class DNDSyncListenerService : WearableListenerService() {
                 intent: Intent?
             ) {
 
-                if (intent?.action == Intent.ACTION_SCREEN_ON) {
+                if (intent?.action == Intent.ACTION_USER_PRESENT){
 
                     Log.d(
                         TAG,
@@ -211,7 +211,7 @@ class DNDSyncListenerService : WearableListenerService() {
             }
         }
 
-        val filter = IntentFilter(Intent.ACTION_SCREEN_ON)
+        val filter = IntentFilter(Intent.ACTION_USER_PRESENT)
 
         registerReceiver(screenReceiver, filter)
     }
