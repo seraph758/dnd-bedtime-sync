@@ -179,42 +179,47 @@ class DNDSyncListenerService : WearableListenerService() {
     // =========================================================
     // 睡眠循环逻辑
     // =========================================================
-
     private fun startBedtimeCycle() {
 
-        if (bedtimeCycleRunning) {
-            return
+    Log.d(TAG, "启动/刷新 Bedtime 循环")
+
+    bedtimeCycleRunning = true
+
+    // 先清理旧 receiver
+    try {
+        screenReceiver?.let {
+            unregisterReceiver(it)
         }
+    } catch (_: Exception) {
+    }
 
-        bedtimeCycleRunning = true
+    screenReceiver = null
 
-        Log.d(TAG, "启动 Bedtime 循环")
+    // 立即拉起一次
+    launchFullscreenActivity()
 
-        launchFullscreenActivity()
+    // 重新注册 receiver
+    screenReceiver = object : BroadcastReceiver() {
 
-        screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(
+            context: Context?,
+            intent: Intent?
+        ) {
 
-            override fun onReceive(
-                context: Context?,
-                intent: Intent?
-            ) {
+            if (intent?.action == Intent.ACTION_USER_PRESENT) {
 
-                if (intent?.action == Intent.ACTION_USER_PRESENT){
+                Log.d(TAG, "检测到 USER_PRESENT")
 
-                    Log.d(
-                        TAG,
-                        "检测到亮屏，重新拉起三星睡眠页面"
-                    )
-
-                    launchFullscreenActivity()
-                }
+                launchFullscreenActivity()
             }
         }
-
-        val filter = IntentFilter(Intent.ACTION_USER_PRESENT)
-
-        registerReceiver(screenReceiver, filter)
     }
+
+    val filter =
+        IntentFilter(Intent.ACTION_USER_PRESENT)
+
+    registerReceiver(screenReceiver, filter)
+}
 
     private fun stopBedtimeCycle() {
 
