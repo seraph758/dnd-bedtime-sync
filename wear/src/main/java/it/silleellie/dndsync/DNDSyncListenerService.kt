@@ -185,7 +185,7 @@ class DNDSyncListenerService : WearableListenerService() {
 
     bedtimeCycleRunning = true
 
-    // 先清理旧 receiver
+    // 先注销旧 receiver
     try {
         screenReceiver?.let {
             unregisterReceiver(it)
@@ -208,7 +208,10 @@ class DNDSyncListenerService : WearableListenerService() {
 
             if (intent?.action == Intent.ACTION_USER_PRESENT) {
 
-                Log.d(TAG, "检测到 USER_PRESENT")
+                Log.d(
+                    TAG,
+                    "检测到 USER_PRESENT"
+                )
 
                 launchFullscreenActivity()
             }
@@ -219,13 +222,11 @@ class DNDSyncListenerService : WearableListenerService() {
         IntentFilter(Intent.ACTION_USER_PRESENT)
 
     registerReceiver(screenReceiver, filter)
-}
+    }
 
     private fun stopBedtimeCycle() {
 
-        if (!bedtimeCycleRunning) {
-            return
-        }
+        
 
         bedtimeCycleRunning = false
 
