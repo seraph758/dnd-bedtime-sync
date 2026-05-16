@@ -1,11 +1,7 @@
 package it.silleellie.dndsync
 
 import android.app.NotificationManager
-import android.content.BroadcastReceiver
-import android.content.ComponentName
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
+import android.content.*
 import android.os.*
 import android.provider.Settings
 import android.util.Log
@@ -17,62 +13,263 @@ import org.apache.commons.lang3.SerializationUtils
 
 class DNDSyncListenerService : WearableListenerService() {
 
-    private val handler = Handler(Looper.getMainLooper())
-
-    private var screenReceiver: BroadcastReceiver? = null
-    private var bedtimeCycleRunning = false
-    private var lastFullscreenLaunch = 0L
-
     companion object {
-        private const val TAG = "DNDSyncListenerService"
-        private const val DND_SYNC_MESSAGE_PATH = "/wear-dnd-sync"
+
+        private const val TAG =
+            "DNDSyncListenerService"
+
+        private const val DND_SYNC_MESSAGE_PATH =
+            "/wear-dnd-sync"
 
         /**
-         * 防止频繁重复拉起 Activity
+         * 用户退出 Bedtime 后
+         * 多久重新进入全屏
          */
-        private const val FULLSCREEN_COOLDOWN_MS = 1500L
+        private const val BEDTIME_RETURN_DELAY =
+            30000L
 
         /**
-         * 防止手表同步后再次回传手机造成死循环
+         * 防止短时间重复 launch
          */
+        private const val LAUNCH_COOLDOWN =
+            2000L
+
         @Volatile
         var isSyncingFromPhone = false
+
+        /**
+         * Bedtime Activity 当前是否可见
+         *
+         * 在 Activity 的 onResume/onPause
+         * 中维护
+         */
+        @Volatile
+        var isBedtimeActivityVisible = false
     }
 
-    override fun onMessageReceived(messageEvent: MessageEvent) {
+    private val handler =
+        Handler(Looper.getMainLooper())
 
-        if (!messageEvent.path.equals(DND_SYNC_MESSAGE_PATH, ignoreCase = true)) {
-            super.onMessageReceived(messageEvent)
+    /**
+     * 当前是否正在运行 Bedtime 守护
+     */
+    private var bedtimeCycleRunning = false
+
+    /**
+     * 防止重复 launch
+     */
+    private var lastLaunchTime = 0L
+
+    /**
+     * Bedtime 返回任务
+     */
+    private val bedtimeRunnable = Runnable {
+
+        if (!bedtimeCycleRunning) {
+
+            Log.d(
+                TAG,
+                "Bedtime 守护未运行"
+            )
+
+            return@Runnable
+        }
+
+        /**
+         * 用户已经真正关闭睡眠模式
+         */
+        if (!isBedtimeEnabled()) {
+
+            Log.d(
+                TAG,
+                "Bedtime 已关闭，停止恢复"
+            )
+
+            stopBedtimeCycle()
+
+            return@Runnable
+        }
+
+        /**
+         * Activity 已在前台
+         */
+        if (isBedtimeActivityVisible) {
+
+            Log.d(
+                TAG,
+                "Bedtime Activity 已显示"
+            )
+
+            return@Runnable
+        }
+
+        Log.d(
+            TAG,
+            "恢复 Bedtime Activity"
+        )
+
+        launchFullscreenActivity()
+    }
+
+    /**
+     * 用户离开 Bedtime 后
+     * 开始 return timer
+     */
+    private val interactionReceiver =
+        object : BroadcastReceiver() {
+
+            override fun onReceive(
+                context: Context?,
+                intent: Intent?
+            ) {
+
+                if (!bedtimeCycleRunning) {
+                    return
+                }
+
+                when (intent?.action) {
+
+                    Intent.ACTION_USER_PRESENT -> {
+
+                        Log.d(
+                            TAG,
+                            "收到 USER_PRESENT"
+                        )
+
+                        /**
+                         * 用户真正关闭了睡眠模式
+                         */
+                        if (!isBedtimeEnabled()) {
+
+                            Log.d(
+                                TAG,
+                                "用户已关闭 Bedtime"
+                            )
+
+                            stopBedtimeCycle()
+
+                            /**
+                             * TODO:
+                             * 通知手机同步退出
+                             */
+
+                            return
+                        }
+
+                        /**
+                         * Bedtime 仍开启
+                         * 用户只是临时退出 UI
+                         */
+
+                        handler.removeCallbacks(
+                            bedtimeRunnable
+                        )
+
+                        handler.postDelayed(
+                            bedtimeRunnable,
+                            BEDTIME_RETURN_DELAY
+                        )
+
+                        Log.d(
+                            TAG,
+                            "已启动 return timer"
+                        )
+                    }
+                }
+            }
+        }
+
+    // =========================================================
+    // Lifecycle
+    // =========================================================
+
+    override fun onCreate() {
+
+        super.onCreate()
+
+        val filter = IntentFilter().apply {
+
+            addAction(
+                Intent.ACTION_USER_PRESENT
+            )
+        }
+
+        registerReceiver(
+            interactionReceiver,
+            filter
+        )
+    }
+
+    override fun onDestroy() {
+
+        try {
+
+            unregisterReceiver(
+                interactionReceiver
+            )
+
+        } catch (_: Exception) {
+        }
+
+        handler.removeCallbacksAndMessages(null)
+
+        super.onDestroy()
+    }
+
+    // =========================================================
+    // Message
+    // =========================================================
+
+    override fun onMessageReceived(
+        messageEvent: MessageEvent
+    ) {
+
+        if (
+            !messageEvent.path.equals(
+                DND_SYNC_MESSAGE_PATH,
+                ignoreCase = true
+            )
+        ) {
+
+            super.onMessageReceived(
+                messageEvent
+            )
+
             return
         }
 
-        Log.d(TAG, "收到手机同步消息")
+        Log.d(
+            TAG,
+            "收到手机同步消息"
+        )
 
         try {
 
             isSyncingFromPhone = true
 
-            val data = messageEvent.data
-
             val phoneSignal =
-                SerializationUtils.deserialize<PhoneSignal>(data)
+                SerializationUtils.deserialize<PhoneSignal>(
+                    messageEvent.data
+                )
 
-            // ======================
-            // 提取同步状态
-            // ======================
+            var dndState =
+                phoneSignal.dndState
 
-            var dndState = phoneSignal.dndState
-            var bedtimeState = phoneSignal.bedtimeState
+            var bedtimeState =
+                phoneSignal.bedtimeState
 
             /**
-             * 自定义扩展协议：
-             * 5 = 开启睡眠模式
-             * 6 = 关闭睡眠模式
+             * 扩展协议
+             * 5 = 开启 Bedtime
+             * 6 = 关闭 Bedtime
              */
             if (dndState == 5) {
+
                 bedtimeState = 1
                 dndState = null
+
             } else if (dndState == 6) {
+
                 bedtimeState = 0
                 dndState = null
             }
@@ -83,15 +280,16 @@ class DNDSyncListenerService : WearableListenerService() {
             )
 
             val nm =
-                getSystemService(Context.NOTIFICATION_SERVICE)
-                        as NotificationManager
+                getSystemService(
+                    Context.NOTIFICATION_SERVICE
+                ) as NotificationManager
 
             val currentDndState =
                 nm.currentInterruptionFilter
 
-            // ======================
-            // DND 同步
-            // ======================
+            // =====================================================
+            // DND
+            // =====================================================
 
             if (
                 dndState != null &&
@@ -99,16 +297,19 @@ class DNDSyncListenerService : WearableListenerService() {
                 dndState in 1..4
             ) {
 
-                changeDndSetting(nm, dndState)
+                changeDndSetting(
+                    nm,
+                    dndState
+                )
             }
 
-            // ======================
-            // Bedtime 同步
-            // ======================
+            // =====================================================
+            // Bedtime
+            // =====================================================
 
             val currentBedtimeState =
                 Settings.Global.getInt(
-                    applicationContext.contentResolver,
+                    contentResolver,
                     getBedtimeSettingName(),
                     -1
                 )
@@ -120,7 +321,8 @@ class DNDSyncListenerService : WearableListenerService() {
 
                 Log.d(
                     TAG,
-                    "Bedtime 改变: $currentBedtimeState -> $bedtimeState"
+                    "Bedtime 改变: " +
+                            "$currentBedtimeState -> $bedtimeState"
                 )
 
                 /**
@@ -129,46 +331,58 @@ class DNDSyncListenerService : WearableListenerService() {
                 val targetDnd =
                     if (bedtimeState == 1) 2 else 1
 
-                changeDndSetting(nm, targetDnd)
+                changeDndSetting(
+                    nm,
+                    targetDnd
+                )
 
-                changeBedtimeSetting(bedtimeState)
+                changeBedtimeSetting(
+                    bedtimeState
+                )
 
                 try {
 
                     if (phoneSignal.powersavePref) {
-                        changePowerModeSetting(bedtimeState)
+
+                        changePowerModeSetting(
+                            bedtimeState
+                        )
                     }
 
                     if (phoneSignal.vibratePref) {
+
                         vibrate()
                     }
 
-                } catch (extEx: Exception) {
+                } catch (e: Exception) {
 
                     Log.e(
                         TAG,
-                        "设置省电/振动失败",
-                        extEx
+                        "扩展状态设置失败",
+                        e
                     )
                 }
-            }
 
-            // ======================
-            // 全屏循环逻辑
-            // ======================
+                /**
+                 * 启动 / 停止 Bedtime 守护
+                 */
+                if (bedtimeState == 1) {
 
-            if (bedtimeState == 1) {
+                    startBedtimeCycle()
 
-                startBedtimeCycle()
+                } else {
 
-            } else if (bedtimeState == 0) {
-
-                stopBedtimeCycle()
+                    stopBedtimeCycle()
+                }
             }
 
         } catch (e: Exception) {
 
-            Log.e(TAG, "处理同步消息失败", e)
+            Log.e(
+                TAG,
+                "处理同步失败",
+                e
+            )
 
         } finally {
 
@@ -177,93 +391,81 @@ class DNDSyncListenerService : WearableListenerService() {
     }
 
     // =========================================================
-    // 睡眠循环逻辑
+    // Bedtime Cycle
     // =========================================================
+
     private fun startBedtimeCycle() {
 
-    Log.d(TAG, "启动/刷新 Bedtime 循环")
+        bedtimeCycleRunning = true
 
-    bedtimeCycleRunning = true
+        Log.d(
+            TAG,
+            "启动 Bedtime 守护"
+        )
 
-    // 先注销旧 receiver
-    try {
-        screenReceiver?.let {
-            unregisterReceiver(it)
+        handler.removeCallbacks(
+            bedtimeRunnable
+        )
+
+        /**
+         * 避免重复 launch
+         */
+        if (!isBedtimeActivityVisible) {
+
+            launchFullscreenActivity()
         }
-    } catch (_: Exception) {
-    }
-
-    screenReceiver = null
-
-    // 立即拉起一次
-    launchFullscreenActivity()
-
-    // 重新注册 receiver
-    screenReceiver = object : BroadcastReceiver() {
-
-        override fun onReceive(
-            context: Context?,
-            intent: Intent?
-        ) {
-
-            if (intent?.action == Intent.ACTION_USER_PRESENT) {
-
-                Log.d(
-                    TAG,
-                    "检测到 USER_PRESENT"
-                )
-
-                launchFullscreenActivity()
-            }
-        }
-    }
-
-    val filter =
-        IntentFilter(Intent.ACTION_USER_PRESENT)
-
-    registerReceiver(screenReceiver, filter)
     }
 
     private fun stopBedtimeCycle() {
 
-        
-
         bedtimeCycleRunning = false
 
-        Log.d(TAG, "停止 Bedtime 循环")
+        handler.removeCallbacks(
+            bedtimeRunnable
+        )
 
-        try {
-
-            screenReceiver?.let {
-                unregisterReceiver(it)
-            }
-
-        } catch (e: Exception) {
-
-            Log.e(TAG, "注销广播失败", e)
-        }
-
-        screenReceiver = null
+        Log.d(
+            TAG,
+            "停止 Bedtime 守护"
+        )
     }
 
     // =========================================================
-    // 核心：直接启动三星睡眠页面
+    // Fullscreen Activity
     // =========================================================
 
     private fun launchFullscreenActivity() {
 
-        val now = SystemClock.elapsedRealtime()
+        val now =
+            SystemClock.elapsedRealtime()
 
         if (
-            now - lastFullscreenLaunch <
-            FULLSCREEN_COOLDOWN_MS
+            now - lastLaunchTime <
+            LAUNCH_COOLDOWN
         ) {
 
-            Log.d(TAG, "Activity 冷却中，跳过")
+            Log.d(
+                TAG,
+                "launch cooldown"
+            )
+
             return
         }
 
-        lastFullscreenLaunch = now
+        /**
+         * 已在前台
+         */
+        if (isBedtimeActivityVisible) {
+
+            Log.d(
+                TAG,
+                "Activity 已在前台"
+            )
+
+            return
+        }
+
+        lastLaunchTime = now
 
         try {
 
@@ -275,48 +477,42 @@ class DNDSyncListenerService : WearableListenerService() {
                 )
 
                 addFlags(
-                    Intent.FLAG_ACTIVITY_NEW_TASK or
-                            Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    Intent.FLAG_ACTIVITY_NEW_TASK
                 )
+
+                action =
+                    Intent.ACTION_VIEW
             }
 
             startActivity(intent)
 
             Log.d(
                 TAG,
-                "已启动三星睡眠模式 Activity"
+                "已启动 Bedtime Activity"
             )
 
         } catch (e: Exception) {
 
             Log.e(
                 TAG,
-                "启动三星睡眠模式失败",
+                "启动 Bedtime Activity 失败",
                 e
             )
         }
     }
 
     // =========================================================
-    // DND
+    // Bedtime State
     // =========================================================
 
-    private fun changeDndSetting(
-        nm: NotificationManager,
-        newSetting: Int
-    ) {
+    private fun isBedtimeEnabled(): Boolean {
 
-        if (nm.isNotificationPolicyAccessGranted) {
-
-            nm.setInterruptionFilter(newSetting)
-
-            Log.d(TAG, "DND 设置为 $newSetting")
-        }
+        return Settings.Global.getInt(
+            contentResolver,
+            getBedtimeSettingName(),
+            0
+        ) == 1
     }
-
-    // =========================================================
-    // Bedtime
-    // =========================================================
 
     private fun getBedtimeSettingName(): String {
 
@@ -326,8 +522,11 @@ class DNDSyncListenerService : WearableListenerService() {
                 ignoreCase = true
             )
         ) {
+
             "setting_bedtime_mode_running_state"
+
         } else {
+
             "bedtime_mode"
         }
     }
@@ -336,7 +535,8 @@ class DNDSyncListenerService : WearableListenerService() {
         newSetting: Int
     ) {
 
-        val name = getBedtimeSettingName()
+        val name =
+            getBedtimeSettingName()
 
         Settings.Global.putInt(
             contentResolver,
@@ -352,7 +552,31 @@ class DNDSyncListenerService : WearableListenerService() {
     }
 
     // =========================================================
-    // 省电模式
+    // DND
+    // =========================================================
+
+    private fun changeDndSetting(
+        nm: NotificationManager,
+        newSetting: Int
+    ) {
+
+        if (
+            nm.isNotificationPolicyAccessGranted
+        ) {
+
+            nm.setInterruptionFilter(
+                newSetting
+            )
+
+            Log.d(
+                TAG,
+                "DND 设置为 $newSetting"
+            )
+        }
+    }
+
+    // =========================================================
+    // Power Save
     // =========================================================
 
     private fun changePowerModeSetting(
@@ -385,14 +609,18 @@ class DNDSyncListenerService : WearableListenerService() {
     }
 
     // =========================================================
-    // 振动
+    // Vibrate
     // =========================================================
 
     private fun vibrate() {
 
-        val vibrator = getSystemService<Vibrator>()
+        val vibrator =
+            getSystemService<Vibrator>()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        if (
+            Build.VERSION.SDK_INT >=
+            Build.VERSION_CODES.S
+        ) {
 
             vibrator?.vibrate(
                 VibrationEffect.createPredefined(
@@ -405,12 +633,5 @@ class DNDSyncListenerService : WearableListenerService() {
             @Suppress("DEPRECATION")
             vibrator?.vibrate(500)
         }
-    }
-
-    override fun onDestroy() {
-
-        stopBedtimeCycle()
-
-        super.onDestroy()
     }
 }
